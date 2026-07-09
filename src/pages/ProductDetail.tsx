@@ -1,94 +1,136 @@
-/*
-  Vista Detalle de Producto
-  --------------------------
-
-  Pendiente de implementar por el candidato:
-
-  1. Implementar en src/services/api.ts:
-     - fetchProduct(id: number): Promise<Product>
-     GET /products/:id
-
-  2. Obtener el id desde useParams()
-
-  3. Cargar el producto con fetchProduct(id)
-     Si no existe (id inválido), mostrar "Producto no encontrado"
-
-  4. Mostrar ficha en pantalla con:
-     - Imagen (thumbnail)
-     - Título
-     - Descripción
-     - Precio
-     - Stock
-     - Categoría
-
-  5. Botón "Volver" a /products
-
-  6. Botón "Descargar PDF por categoría":
-     - Al hacer clic, debe generar un PDF con TODOS los productos
-       de la MISMA categoría a la que pertenece este producto
-     - Para obtener los productos de esa categoría, puedes:
-       a) Usar fetchProducts() y filtrar localmente por categoría
-       b) Consultar GET /products?limit=0 (si aplica) y filtrar
-     - El PDF sigue la misma estructura que el de Products.tsx
-       (INFORME DE PRODUCTOS POR CATEGORÍA)
-
-     Especificación del PDF:
-
-     TAMAÑO: A4 (210mm x 297mm)
-     Márgenes: 25mm superior, 20mm laterales, 20mm inferior
-
-     ESTRUCTURA VISUAL:
-     ╔══════════════════════════════════════════════╗
-     ║  +-----------+  +-------------------------+  ║
-     ║  |           |  | INFORME DE PRODUCTOS    |  ║
-     ║  |   LOGO    |  | POR CATEGORÍA           |  ║
-     ║  | 120x40px  |  | Fecha: 09/07/2026       |  ║
-     ║  |           |  |                         |  ║
-     ║  +-----------+  +-------------------------+  ║
-     ║  Izquierda          Derecha (alineado der)   ║
-     ║                                              ║
-     ║  ────────────────────────────────────────    ║
-     ║                                              ║
-     ║  Categoría: Electronics                      ║
-     ║  Total de productos: 12                      ║
-     ║                                              ║
-     ║  ────────────────────────────────────────    ║
-     ║                                              ║
-     ║  +──────────┬────────┬───────┬────────+      ║
-     ║  | Título   | Precio | Stock | Categ. |      ║  ← Encabezados: Bold 11px, #555
-     ║  +──────────┼────────┼───────┼────────+      ║     fondo: #f5f5f5
-     ║  | iPhone   | $999   | 150   | Elect. |      ║  ← Filas: Normal 10px, #333
-     ║  | Samsung  | $899   | 200   | Elect. |      ║     intercalado: blanco/gris claro
-     ║  +──────────┴────────┴───────┴────────+      ║
-     ║                                              ║
-     ║  ────────────────────────────────────────    ║
-     ║  Generado el: 09/07/2026                     ║  ← Arial Normal 9px, #888
-     ╚══════════════════════════════════════════════╝
-
-     El logo debe cargarse desde src/assets/INKO_logo.png.
-     Puedes usar cualquier librería para generar el PDF.
-
-  7. Estados: loading, error, not found
-
-  Tipos: Product
-  API base: BASE_URL = 'https://dummyjson.com'
-*/
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { fetchProduct, fetchAllProducts } from '../services/api'
+import { generateProductsByCategoryPdf } from '../utils/pdf'
+import type { Product } from '../types'
 
 export default function ProductDetail() {
+  const { id } = useParams<{ id: string }>()
+  const [product, setProduct] = useState<Product | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [notFound, setNotFound] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+  useEffect(() => {
+    const productId = Number(id)
+    if (!id || Number.isNaN(productId)) {
+      setNotFound(true)
+      setLoading(false)
+      return
+    }
+
+    async function load() {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await fetchProduct(productId)
+        setProduct(data)
+      } catch {
+        setNotFound(true)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [id])
+
+  const handleDownloadPdf = async () => {
+    if (!product) return
+    try {
+      setPdfLoading(true)
+      const all = await fetchAllProducts()
+      const sameCategory = all.filter((p) => p.category === product.category)
+      await generateProductsByCategoryPdf(product.category, sameCategory)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="loading-state">Cargando producto...</div>
+      </div>
+    )
+  }
+
+  if (notFound || !product) {
+    return (
+      <div className="page">
+        <div className="empty-state">
+          <h3>Producto no encontrado</h3>
+          <p>El ID solicitado no existe</p>
+          <Link to="/products" className="btn btn-secondary" style={{ marginTop: 16 }}>
+            Volver a productos
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="page">
+        <div className="error-state">{error}</div>
+      </div>
+    )
+  }
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Detalle del producto</h1>
-          <p>Detalle — pendiente de implementar</p>
+          <p>{product.title}</p>
         </div>
       </div>
-      <div className="empty-state">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-        </svg>
-        <h3>Vista no implementada</h3>
-        <p>Implementa el servicio API y la vista de detalle con PDF por categoría</p>
+
+      <div className="detail-actions">
+        <Link to="/products" className="btn btn-secondary">
+          Volver
+        </Link>
+        <button
+          className="btn btn-primary"
+          disabled={pdfLoading}
+          onClick={handleDownloadPdf}
+        >
+          {pdfLoading ? 'Generando PDF...' : 'Descargar PDF por categoría'}
+        </button>
+      </div>
+
+      <div className="detail-card product-detail-card">
+        <img
+          src={product.thumbnail}
+          alt={product.title}
+          className="product-detail-image"
+        />
+
+        <div className="detail-header">
+          <div>
+            <div className="budget-id">{product.title}</div>
+            <div className="budget-date">ID: {product.id}</div>
+          </div>
+          <span className="badge badge-sent">{product.category}</span>
+        </div>
+
+        <div className="detail-field">
+          <span className="field-label">Descripción</span>
+          <span className="field-value">{product.description}</span>
+        </div>
+        <div className="detail-field">
+          <span className="field-label">Precio</span>
+          <span className="field-value">${product.price.toFixed(2)}</span>
+        </div>
+        <div className="detail-field">
+          <span className="field-label">Stock</span>
+          <span className="field-value">{product.stock}</span>
+        </div>
+        <div className="detail-field">
+          <span className="field-label">Categoría</span>
+          <span className="field-value">{product.category}</span>
+        </div>
       </div>
     </div>
   )
