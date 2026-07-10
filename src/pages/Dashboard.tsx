@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { fetchUsers, fetchProducts } from '../services/api'
+import { fetchUsers, fetchProducts, fetchProductCategories } from '../services/api'
+import CategoryChip from '../components/CategoryChip'
 import type { Product } from '../types'
 
 export default function Dashboard() {
@@ -11,32 +12,36 @@ export default function Dashboard() {
   const [recentProducts, setRecentProducts] = useState<Product[]>([])
 
   useEffect(() => {
-    async function load() {
+    let cancelled = false
+
+    void (async () => {
       try {
         setLoading(true)
         setError(null)
 
-        const [usersRes, productsRes] = await Promise.all([
+        const [usersRes, productsRes, categories] = await Promise.all([
           fetchUsers(1, 1),
           fetchProducts(1, 5),
+          fetchProductCategories(),
         ])
+
+        if (cancelled) return
 
         setTotalUsers(usersRes.total)
         setTotalProducts(productsRes.total)
         setRecentProducts(productsRes.products)
-
-        const uniqueCategories = new Set(
-          productsRes.products.map((p) => p.category)
-        )
-        setCategoriesCount(uniqueCategories.size)
+        setCategoriesCount(categories.length)
       } catch {
+        if (cancelled) return
         setError('No se pudo cargar el resumen')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
-    }
+    })()
 
-    load()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   if (loading) {
@@ -90,7 +95,7 @@ export default function Dashboard() {
         <div className="stat-card accent-orange">
           <div className="stat-label">Categorías</div>
           <div className="stat-value">{categoriesCount}</div>
-          <div className="stat-sub">En últimos productos</div>
+          <div className="stat-sub">En catálogo completo</div>
           <div className="stat-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 6h16M4 10h16M4 14h16M4 18h16" />
@@ -107,14 +112,14 @@ export default function Dashboard() {
           <p>No se encontraron productos recientes</p>
         </div>
       ) : (
-        <div className="recent-budgets">
+        <div className="recent-products">
           {recentProducts.map((product) => (
-            <div key={product.id} className="recent-budget-item">
+            <div key={product.id} className="recent-product-item">
               <div>
-                <div className="rb-client">{product.title}</div>
-                <div className="rb-id">{product.category}</div>
+                <div className="recent-product-title">{product.title}</div>
+                <CategoryChip category={product.category} />
               </div>
-              <div className="rb-amount">${product.price.toFixed(2)}</div>
+              <div className="recent-product-price">${product.price.toFixed(2)}</div>
             </div>
           ))}
         </div>

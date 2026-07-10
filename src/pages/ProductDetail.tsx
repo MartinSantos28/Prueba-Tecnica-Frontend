@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { fetchProduct, fetchAllProducts } from '../services/api'
-import { generateProductsByCategoryPdf } from '../utils/pdf'
+import { fetchProduct, getAllProducts, HttpError } from '../services/api'
+import { exportProductsByCategoryPdf } from '../utils/pdfExport'
+import { getCategoryLabel } from '../utils/categories'
+import { usePdfExport } from '../hooks/usePdfExport'
+import CategoryChip from '../components/CategoryChip'
 import type { Product } from '../types'
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
-  const [pdfLoading, setPdfLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { pdfLoading, pdfError, runExport } = usePdfExport()
 
   useEffect(() => {
     const productId = Number(id)
@@ -20,38 +23,73 @@ export default function ProductDetail() {
       return
     }
 
-    async function load() {
+    let cancelled = false
+
+    void (async () => {
       try {
         setLoading(true)
+        setNotFound(false)
         setError(null)
         const data = await fetchProduct(productId)
+        if (cancelled) return
         setProduct(data)
-      } catch {
-        setNotFound(true)
+      } catch (err) {
+        if (cancelled) return
+        if (err instanceof HttpError && err.status === 404) {
+          setNotFound(true)
+        } else {
+          setError('Error al cargar el producto')
+        }
+        setProduct(null)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
-    }
+    })()
 
-    load()
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
-  const handleDownloadPdf = async () => {
+  const handleDownloadPdf = () => {
     if (!product) return
-    try {
-      setPdfLoading(true)
-      const all = await fetchAllProducts()
-      const sameCategory = all.filter((p) => p.category === product.category)
-      await generateProductsByCategoryPdf(product.category, sameCategory)
-    } finally {
-      setPdfLoading(false)
-    }
+
+    void runExport(
+      async () => {
+        const all = await getAllProducts()
+        const sameCategory = all.filter((p) => p.category === product.category)
+
+        if (!sameCategory.length) {
+          throw new Error(
+            `No hay productos en la categoría "${getCategoryLabel(product.category)}"`
+          )
+        }
+
+        await exportProductsByCategoryPdf(product.category, sameCategory)
+      },
+      {
+        title: 'PDF por categoría generado',
+        message: `Informe de ${getCategoryLabel(product.category)} descargado.`,
+        link: '/products',
+      }
+    )
   }
 
   if (loading) {
     return (
       <div className="page">
         <div className="loading-state">Cargando producto...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="page">
+        <div className="error-state">{error}</div>
+        <Link to="/products" className="btn btn-secondary" style={{ marginTop: 16 }}>
+          Volver a productos
+        </Link>
       </div>
     )
   }
@@ -66,14 +104,6 @@ export default function ProductDetail() {
             Volver a productos
           </Link>
         </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="page">
-        <div className="error-state">{error}</div>
       </div>
     )
   }
@@ -100,6 +130,12 @@ export default function ProductDetail() {
         </button>
       </div>
 
+      {pdfError && (
+        <div className="error-state" style={{ marginBottom: 16 }}>
+          {pdfError}
+        </div>
+      )}
+
       <div className="detail-card product-detail-card">
         <img
           src={product.thumbnail}
@@ -109,10 +145,10 @@ export default function ProductDetail() {
 
         <div className="detail-header">
           <div>
-            <div className="budget-id">{product.title}</div>
-            <div className="budget-date">ID: {product.id}</div>
+            <div className="detail-title">{product.title}</div>
+            <div className="detail-meta">ID: {product.id}</div>
           </div>
-          <span className="badge badge-sent">{product.category}</span>
+          <CategoryChip category={product.category} />
         </div>
 
         <div className="detail-field">
@@ -129,7 +165,9 @@ export default function ProductDetail() {
         </div>
         <div className="detail-field">
           <span className="field-label">Categoría</span>
-          <span className="field-value">{product.category}</span>
+          <span className="field-value">
+            <CategoryChip category={product.category} />
+          </span>
         </div>
       </div>
     </div>

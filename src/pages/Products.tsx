@@ -1,83 +1,104 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchProducts, fetchAllProducts } from '../services/api'
-import { generateProductsByCategoryPdf } from '../utils/pdf'
+import { fetchProducts, fetchProductCategories, getAllProducts } from '../services/api'
+import { exportProductsByCategoryPdf } from '../utils/pdfExport'
+import { getCategoryLabel, sortCategoriesByLabel } from '../utils/categories'
+import { usePaginatedList } from '../hooks/usePaginatedList'
+import { usePdfExport } from '../hooks/usePdfExport'
+import CategoryChip from '../components/CategoryChip'
+import Pagination from '../components/Pagination'
 import type { Product } from '../types'
 
 const PAGE_SIZE = 10
 
 export default function Products() {
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const [products, setProducts] = useState<Product[]>([])
-  const [total, setTotal] = useState(0)
-  const [allProducts, setAllProducts] = useState<Product[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
-  const [pdfLoading, setPdfLoading] = useState(false)
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-
-  const loadPage = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const res = await fetchProducts(page, PAGE_SIZE)
-      setProducts(res.products)
-      setTotal(res.total)
-    } catch {
-      setError('Error al cargar productos')
-    } finally {
-      setLoading(false)
-    }
-  }, [page])
+  const [apiCategories, setApiCategories] = useState<string[]>([])
+  const { pdfLoading, pdfError, runExport, clearPdfError, reportPdfError } = usePdfExport()
 
   useEffect(() => {
-    loadPage()
-  }, [loadPage])
-
-  useEffect(() => {
-    fetchAllProducts()
-      .then(setAllProducts)
-      .catch(() => { })
+    fetchProductCategories()
+      .then(setApiCategories)
+      .catch(() => {})
   }, [])
+
+  const fetchProductsPage = useCallback(async (page: number, pageSize: number) => {
+    const res = await fetchProducts(page, pageSize)
+    return { items: res.products, total: res.total }
+  }, [])
+
+  const filterProductBySearch = useCallback((product: Product, query: string) => {
+    const q = query.toLowerCase()
+    return (
+      product.title.toLowerCase().includes(q) ||
+      product.category.toLowerCase().includes(q) ||
+      getCategoryLabel(product.category).toLowerCase().includes(q)
+    )
+  }, [])
+
+  const filterProductByCategory = useCallback(
+    (product: Product, category: string) => product.category === category,
+    []
+  )
+
+  const {
+    page,
+    setPage,
+    items: displayedProducts,
+    allItems: allProducts,
+    totalPages,
+    error,
+    tableLoading,
+    ensureAllLoaded,
+  } = usePaginatedList({
+    pageSize: PAGE_SIZE,
+    search,
+    groupFilter: selectedCategory,
+    fetchPage: fetchProductsPage,
+    fetchAll: getAllProducts,
+    filterByGroup: filterProductByCategory,
+    filterBySearch: filterProductBySearch,
+    loadErrorMessage: 'Error al cargar productos',
+  })
 
   const categories = useMemo(
     () =>
-      [...new Set(allProducts.map((p) => p.category))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
-    [allProducts]
+      sortCategoriesByLabel([
+        ...new Set([
+          ...apiCategories,
+          ...allProducts.map((p) => p.category),
+        ]),
+      ]),
+    [apiCategories, allProducts]
   )
 
-  const displayedProducts = useMemo(() => {
-    const base = selectedCategory
-      ? allProducts.filter((p) => p.category === selectedCategory)
-      : products
-
-    const q = search.trim().toLowerCase()
-    if (!q) return base
-
-    return base.filter(
-      (p) =>
-        p.title.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q)
-    )
-  }, [products, allProducts, selectedCategory, search])
-
-  const handleDownloadPdf = async () => {
-    if (!selectedCategory) return
-    try {
-      setPdfLoading(true)
-      const source = allProducts.length ? allProducts : await fetchAllProducts()
-      const filtered = source.filter((p) => p.category === selectedCategory)
-      if (!filtered.length) return
-      await generateProductsByCategoryPdf(selectedCategory, filtered)
-    } finally {
-      setPdfLoading(false)
+  const handleDownloadPdf = () => {
+    if (!selectedCategory) {
+      reportPdfError('Selecciona una categoría para generar el PDF')
+      return
     }
+
+    void runExport(
+      async () => {
+        const source = await ensureAllLoaded()
+        const filtered = source.filter((p) => p.category === selectedCategory)
+
+        if (!filtered.length) {
+          throw new Error(
+            `No hay productos en la categoría "${getCategoryLabel(selectedCategory)}"`
+          )
+        }
+
+        await exportProductsByCategoryPdf(selectedCategory, filtered)
+      },
+      {
+        title: 'PDF por categoría generado',
+        message: `Informe de ${getCategoryLabel(selectedCategory)} descargado.`,
+        link: '/products',
+      }
+    )
   }
 
   return (
@@ -100,26 +121,37 @@ export default function Products() {
             />
             <select
               value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
+              className={!selectedCategory && pdfError ? 'field-error' : undefined}
+              aria-invalid={!selectedCategory && Boolean(pdfError)}
+              onChange={(e) => {
+                setSelectedCategory(e.target.value)
+                clearPdfError()
+              }}
             >
               <option value="">Todas las categorías</option>
               {categories.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {getCategoryLabel(c)}
                 </option>
               ))}
             </select>
           </div>
           <button
             className="btn btn-primary btn-sm"
-            disabled={!selectedCategory || pdfLoading}
+            disabled={pdfLoading || tableLoading}
             onClick={handleDownloadPdf}
           >
             {pdfLoading ? 'Generando...' : 'Descargar PDF'}
           </button>
         </div>
 
-        {loading ? (
+        {pdfError && (
+          <div className="error-state" style={{ margin: '0 0 16px' }}>
+            {pdfError}
+          </div>
+        )}
+
+        {tableLoading ? (
           <div className="loading-state">Cargando productos...</div>
         ) : error ? (
           <div className="error-state">{error}</div>
@@ -128,7 +160,7 @@ export default function Products() {
             <h3>Sin resultados</h3>
             <p>
               {selectedCategory
-                ? 'No hay productos en esta categoría'
+                ? `No hay productos en ${getCategoryLabel(selectedCategory)}`
                 : 'No se encontraron productos'}
             </p>
           </div>
@@ -154,34 +186,20 @@ export default function Products() {
                       <td>{product.title}</td>
                       <td>${product.price.toFixed(2)}</td>
                       <td>{product.stock}</td>
-                      <td>{product.category}</td>
+                      <td>
+                        <CategoryChip category={product.category} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            {!selectedCategory && (
-              <div className="pagination">
-                <button
-                  className="btn btn-secondary btn-sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Anterior
-                </button>
-                <span className="pagination-info">
-                  Página {page} de {totalPages}
-                </span>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Siguiente
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              onPageChange={setPage}
+            />
           </>
         )}
       </div>

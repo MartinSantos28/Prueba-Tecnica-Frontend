@@ -1,8 +1,9 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import logoUrl from '../assets/INKO_LOGO.png'
+import logoUrl from '../assets/INKO_logo.png'
 import type { User, Product } from '../types'
 import { registerArialFont, ARIAL } from './arialFont'
+import { getCategoryLabel, sortCategoriesByLabel } from './categories'
 
 const PAGE_W = 210
 const PAGE_H = 297
@@ -122,7 +123,7 @@ export async function generateProductsByCategoryPdf(
     doc.setFont(ARIAL, 'normal')
     doc.setFontSize(11)
     doc.setTextColor(51, 51, 51)
-    doc.text(`Categoría: ${category}`, MARGIN_LR, y)
+    doc.text(`Categoría: ${getCategoryLabel(category)}`, MARGIN_LR, y)
     y += 7
     doc.text(`Total de productos: ${products.length}`, MARGIN_LR, y)
     y = drawSeparator(doc, y + 4)
@@ -134,11 +135,82 @@ export async function generateProductsByCategoryPdf(
             p.title,
             `$${p.price.toFixed(2)}`,
             String(p.stock),
-            p.category,
+            getCategoryLabel(p.category),
         ]),
         ...tableStyles,
         didDrawPage: () => drawPageFooter(doc),
     })
 
-    doc.save(`informe-productos-${category.replace(/\s+/g, '-').toLowerCase()}.pdf`)
+    doc.save(
+        `informe-productos-${getCategoryLabel(category).replace(/\s+/g, '-').toLowerCase()}.pdf`
+    )
+}
+
+function groupProductsByCategory(products: Product[]): Map<string, Product[]> {
+    const grouped = new Map<string, Product[]>()
+    for (const product of products) {
+        const list = grouped.get(product.category) ?? []
+        list.push(product)
+        grouped.set(product.category, list)
+    }
+    return grouped
+}
+
+export async function generateAllProductsByCategoryPdf(
+    products: Product[]
+): Promise<void> {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    await registerArialFont(doc)
+
+    const grouped = groupProductsByCategory(products)
+    const categories = sortCategoriesByLabel([...grouped.keys()])
+
+    let y = drawHeader(doc, 'INFORME DE PRODUCTOS', 'TODAS LAS CATEGORÍAS')
+    y = drawSeparator(doc, y)
+
+    doc.setFont(ARIAL, 'normal')
+    doc.setFontSize(11)
+    doc.setTextColor(51, 51, 51)
+    doc.text(`Total de productos: ${products.length}`, MARGIN_LR, y)
+    y += 7
+    doc.text(`Total de categorías: ${categories.length}`, MARGIN_LR, y)
+    y = drawSeparator(doc, y + 4)
+
+    for (const category of categories) {
+        const categoryProducts = grouped.get(category) ?? []
+
+        if (y > PAGE_H - MARGIN_BOTTOM - 40) {
+            doc.addPage()
+            y = MARGIN_TOP
+        }
+
+        doc.setFont(ARIAL, 'bold')
+        doc.setFontSize(11)
+        doc.setTextColor(51, 51, 51)
+        doc.text(`Categoría: ${getCategoryLabel(category)}`, MARGIN_LR, y)
+        y += 7
+
+        doc.setFont(ARIAL, 'normal')
+        doc.text(`Total de productos: ${categoryProducts.length}`, MARGIN_LR, y)
+        y += 4
+
+        autoTable(doc, {
+            startY: y,
+            head: [['Título', 'Precio', 'Stock', 'Categoría']],
+            body: categoryProducts.map((p) => [
+                p.title,
+                `$${p.price.toFixed(2)}`,
+                String(p.stock),
+                getCategoryLabel(p.category),
+            ]),
+            ...tableStyles,
+            didDrawPage: () => drawPageFooter(doc),
+        })
+
+        const finalY = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable
+            ?.finalY
+        y = (finalY ?? y) + 12
+    }
+
+    doc.save('informe-productos-todas-categorias.pdf')
 }

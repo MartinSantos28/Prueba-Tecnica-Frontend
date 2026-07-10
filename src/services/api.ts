@@ -1,14 +1,49 @@
-import type { User, Product, UsersResponse, ProductsResponse } from '../types'
+import type { Product, UsersResponse, ProductsResponse } from '../types'
 
 export const BASE_URL = 'https://dummyjson.com'
 
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    throw new Error('Error HTTP: ${response.status} ')
-  }
-  return response.json() as Promise<T>;
+type ProductCategoryResponse = {
+  slug: string
+  name: string
+  url: string
 }
 
+function createCachedFetcher<T>(fetcher: () => Promise<T>) {
+  let cache: T | null = null
+  let inFlight: Promise<T> | null = null
+
+  return (force = false): Promise<T> => {
+    if (!force && cache) return Promise.resolve(cache)
+    if (!force && inFlight) return inFlight
+
+    inFlight = fetcher()
+      .then((data) => {
+        cache = data
+        return data
+      })
+      .finally(() => {
+        inFlight = null
+      })
+
+    return inFlight
+  }
+}
+
+export class HttpError extends Error {
+  status: number
+
+  constructor(status: number, message?: string) {
+    super(message ?? `Error HTTP: ${status}`)
+    this.status = status
+  }
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new HttpError(response.status)
+  }
+  return response.json() as Promise<T>
+}
 
 export async function fetchUsers(
   page = 1,
@@ -33,26 +68,23 @@ export async function fetchProduct(id: number): Promise<Product> {
   return handleResponse<Product>(response)
 }
 
-export async function fetchAllUsers(): Promise<User[]> {
-  const first = await fetchUsers(1, 100)
-  if (first.total <= first.users.length) return first.users
-
-  const pages = Math.ceil(first.total / 100)
-  const rest = await Promise.all(
-    Array.from({ length: pages - 1 }, (_, i) => fetchUsers(i + 2, 100))
-  )
-  return [...first.users, ...rest.flatMap((r) => r.users)]
+export async function fetchProductCategories(): Promise<string[]> {
+  const response = await fetch(`${BASE_URL}/products/categories`)
+  const data = await handleResponse<ProductCategoryResponse[]>(response)
+  return data.map((category) => category.slug)
 }
 
+export const fetchAllUsers = createCachedFetcher(async () => {
+  const response = await fetch(`${BASE_URL}/users?limit=0`)
+  const data = await handleResponse<UsersResponse>(response)
+  return data.users
+})
 
+export const fetchAllProducts = createCachedFetcher(async () => {
+  const response = await fetch(`${BASE_URL}/products?limit=0`)
+  const data = await handleResponse<ProductsResponse>(response)
+  return data.products
+})
 
-export async function fetchAllProducts(): Promise<Product[]> {
-  const first = await fetchProducts(1, 100)
-  if (first.total <= first.products.length) return first.products
-
-  const pages = Math.ceil(first.total / 100)
-  const rest = await Promise.all(
-    Array.from({ length: pages - 1 }, (_, i) => fetchProducts(i + 2, 100))
-  )
-  return [...first.products, ...rest.flatMap((r) => r.products)]
-}
+/** Alias descriptivo para obtener todo el catálogo en una sola petición. */
+export const getAllProducts = fetchAllProducts
